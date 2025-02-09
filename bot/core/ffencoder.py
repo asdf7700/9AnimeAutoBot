@@ -1,3 +1,4 @@
+import subprocess
 from re import findall 
 from math import floor
 from time import time
@@ -11,8 +12,28 @@ from bot import Var, bot_loop, ffpids_cache, LOGS
 from .func_utils import mediainfo, convertBytes, convertTime, sendMessage, editMessage
 from .reporter import rep
 
-# Use GPU_TYPE from Var
-GPU_TYPE = getattr(Var, "GPU_TYPE", "cpu")  # Defaults to CPU if not set
+# Auto-detect GPU type
+def detect_gpu():
+    try:
+        subprocess.run(["nvidia-smi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return "nvidia"
+    except subprocess.CalledProcessError:
+        pass
+    except FileNotFoundError:
+        pass
+
+    try:
+        subprocess.run(["vainfo"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return "intel"
+    except subprocess.CalledProcessError:
+        pass
+    except FileNotFoundError:
+        pass
+
+    return "cpu"
+
+# Auto-detected GPU type
+GPU_TYPE = detect_gpu()
 
 ffargs = {
     'nvidia': {
@@ -34,6 +55,8 @@ ffargs = {
         '360': "ffmpeg -i '{}' -c:v libx264 -preset slow -b:v 1M -c:a copy -progress {} '{}'",
     }
 }
+
+LOGS.info(f"Auto-detected GPU: {GPU_TYPE.upper()}")
 
 class FFEncoder:
     def __init__(self, message, path, name, qual):
@@ -93,12 +116,8 @@ class FFEncoder:
         dl_npath, out_npath = ospath.join("encode", "ffanimeadvin.mkv"), ospath.join("encode", "ffanimeadvout.mkv")
         await aiorename(self.dl_path, dl_npath)
         
-        # Choose correct FFmpeg command based on GPU type
-        if GPU_TYPE not in ffargs:
-            LOGS.error(f"Invalid GPU_TYPE: {GPU_TYPE}. Defaulting to CPU.")
-            ffcode = ffargs["cpu"][self.__qual].format(dl_npath, self.__prog_file, out_npath)
-        else:
-            ffcode = ffargs[GPU_TYPE][self.__qual].format(dl_npath, self.__prog_file, out_npath)
+        # Choose correct FFmpeg command based on detected GPU type
+        ffcode = ffargs[GPU_TYPE][self.__qual].format(dl_npath, self.__prog_file, out_npath)
 
         LOGS.info(f'FFCode: {ffcode}')
         self.__proc = await create_subprocess_shell(ffcode, stdout=PIPE, stderr=PIPE)
@@ -118,11 +137,3 @@ class FFEncoder:
             return self.out_path
         else:
             await rep.report((await self.__proc.stderr.read()).decode().strip(), "error")
-            
-    async def cancel_encode(self):
-        self.is_cancelled = True
-        if self.__proc is not None:
-            try:
-                self.__proc.kill()
-            except:
-                pass
