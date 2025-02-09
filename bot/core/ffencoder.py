@@ -11,8 +11,8 @@ from bot import Var, bot_loop, ffpids_cache, LOGS
 from .func_utils import mediainfo, convertBytes, convertTime, sendMessage, editMessage
 from .reporter import rep
 
-# Detect GPU type
-GPU_TYPE = Var.nvidia  # Set this in your config: 'nvidia', 'intel', 'cpu'
+# Use GPU_TYPE from Var
+GPU_TYPE = getattr(Var, "GPU_TYPE", "cpu")  # Defaults to CPU if not set
 
 ffargs = {
     'nvidia': {
@@ -50,22 +50,24 @@ class FFEncoder:
 
     async def progress(self):
         self.__total_time = await mediainfo(self.dl_path, get_duration=True)
-        if isinstance(self.__total_time, str):
-            self.__total_time = 1.0
+        if isinstance(self.__total_time, str) or not self.__total_time:
+            self.__total_time = 1.0  # Avoid division errors
+        
         while not (self.__proc is None or self.is_cancelled):
             async with aiopen(self.__prog_file, 'r+') as p:
                 text = await p.read()
+            
             if text:
                 time_done = floor(int(t[-1]) / 1000000) if (t := findall("out_time_ms=(\d+)", text)) else 1
                 ensize = int(s[-1]) if (s := findall(r"total_size=(\d+)", text)) else 0
                 
                 diff = time() - self.__start_time
-                speed = ensize / diff
-                percent = round((time_done/self.__total_time)*100, 2)
-                tsize = ensize / (max(percent, 0.01)/100)
-                eta = (tsize-ensize)/max(speed, 0.01)
+                speed = ensize / max(diff, 0.01)
+                percent = round((time_done / self.__total_time) * 100, 2)
+                tsize = ensize / (max(percent, 0.01) / 100)
+                eta = (tsize - ensize) / max(speed, 0.01)
     
-                bar = floor(percent/8)*"█" + (12 - floor(percent/8))*"▒"
+                bar = floor(percent / 8) * "█" + (12 - floor(percent / 8)) * "▒"
                 
                 progress_str = f"""<blockquote>‣ <b>Anime Name :</b> <b><i>{self.__name}</i></b></blockquote>
 <blockquote>‣ <b>Status :</b> <i>Encoding</i>
@@ -74,7 +76,7 @@ class FFEncoder:
     ‣ <b>Speed :</b> {convertBytes(speed)}/s
     ‣ <b>Time Took :</b> {convertTime(diff)}
     ‣ <b>Time Left :</b> {convertTime(eta)}</blockquote>
-<blockquote>‣ <b>File(s) Encoded:</b> <code>{Var.QUALS.index(self.__qual)} / {len(Var.QUALS)}</code></blockquote>"""
+<blockquote>‣ <b>File(s) Encoded:</b> <code>{Var.QUALS.index(self.__qual) if self.__qual in Var.QUALS else '?'} / {len(Var.QUALS)}</code></blockquote>"""
             
                 await editMessage(self.message, progress_str)
                 if (prog := findall(r"progress=(\w+)", text)) and prog[-1] == 'end':
@@ -91,9 +93,13 @@ class FFEncoder:
         dl_npath, out_npath = ospath.join("encode", "ffanimeadvin.mkv"), ospath.join("encode", "ffanimeadvout.mkv")
         await aiorename(self.dl_path, dl_npath)
         
-        # Choose the correct FFmpeg command based on GPU type
-        ffcode = ffargs[GPU_TYPE][self.__qual].format(dl_npath, self.__prog_file, out_npath)
-        
+        # Choose correct FFmpeg command based on GPU type
+        if GPU_TYPE not in ffargs:
+            LOGS.error(f"Invalid GPU_TYPE: {GPU_TYPE}. Defaulting to CPU.")
+            ffcode = ffargs["cpu"][self.__qual].format(dl_npath, self.__prog_file, out_npath)
+        else:
+            ffcode = ffargs[GPU_TYPE][self.__qual].format(dl_npath, self.__prog_file, out_npath)
+
         LOGS.info(f'FFCode: {ffcode}')
         self.__proc = await create_subprocess_shell(ffcode, stdout=PIPE, stderr=PIPE)
         proc_pid = self.__proc.pid
