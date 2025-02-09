@@ -4,7 +4,6 @@ from time import time
 from os import path as ospath
 from aiofiles import open as aiopen
 from aiofiles.os import remove as aioremove, rename as aiorename
-from shlex import split as ssplit
 from asyncio import sleep as asleep, gather, create_subprocess_shell, create_task
 from asyncio.subprocess import PIPE
 
@@ -12,11 +11,28 @@ from bot import Var, bot_loop, ffpids_cache, LOGS
 from .func_utils import mediainfo, convertBytes, convertTime, sendMessage, editMessage
 from .reporter import rep
 
+# Detect GPU type
+GPU_TYPE = Var.GPU_TYPE  # Set this in your config: 'nvidia', 'intel', 'cpu'
+
 ffargs = {
-    '1080': Var.FFCODE_1080,
-    '720': Var.FFCODE_720,
-    '480': Var.FFCODE_480,
-    '360': Var.FFCODE_360,
+    'nvidia': {
+        '1080': "ffmpeg -hwaccel cuda -i '{}' -c:v h264_nvenc -preset slow -b:v 5M -c:a copy -progress {} '{}'",
+        '720': "ffmpeg -hwaccel cuda -i '{}' -c:v h264_nvenc -preset slow -b:v 3M -c:a copy -progress {} '{}'",
+        '480': "ffmpeg -hwaccel cuda -i '{}' -c:v h264_nvenc -preset slow -b:v 1.5M -c:a copy -progress {} '{}'",
+        '360': "ffmpeg -hwaccel cuda -i '{}' -c:v h264_nvenc -preset slow -b:v 1M -c:a copy -progress {} '{}'",
+    },
+    'intel': {
+        '1080': "ffmpeg -hwaccel vaapi -i '{}' -vf format=nv12,hwupload -c:v h264_vaapi -b:v 5M -c:a copy -progress {} '{}'",
+        '720': "ffmpeg -hwaccel vaapi -i '{}' -vf format=nv12,hwupload -c:v h264_vaapi -b:v 3M -c:a copy -progress {} '{}'",
+        '480': "ffmpeg -hwaccel vaapi -i '{}' -vf format=nv12,hwupload -c:v h264_vaapi -b:v 1.5M -c:a copy -progress {} '{}'",
+        '360': "ffmpeg -hwaccel vaapi -i '{}' -vf format=nv12,hwupload -c:v h264_vaapi -b:v 1M -c:a copy -progress {} '{}'",
+    },
+    'cpu': {
+        '1080': "ffmpeg -i '{}' -c:v libx264 -preset slow -b:v 5M -c:a copy -progress {} '{}'",
+        '720': "ffmpeg -i '{}' -c:v libx264 -preset slow -b:v 3M -c:a copy -progress {} '{}'",
+        '480': "ffmpeg -i '{}' -c:v libx264 -preset slow -b:v 1.5M -c:a copy -progress {} '{}'",
+        '360': "ffmpeg -i '{}' -c:v libx264 -preset slow -b:v 1M -c:a copy -progress {} '{}'",
+    }
 }
 
 class FFEncoder:
@@ -71,12 +87,12 @@ class FFEncoder:
     
         async with aiopen(self.__prog_file, 'w+'):
             LOGS.info("Progress Temp Generated !")
-            pass
         
         dl_npath, out_npath = ospath.join("encode", "ffanimeadvin.mkv"), ospath.join("encode", "ffanimeadvout.mkv")
         await aiorename(self.dl_path, dl_npath)
         
-        ffcode = ffargs[self.__qual].format(dl_npath, self.__prog_file, out_npath)
+        # Choose the correct FFmpeg command based on GPU type
+        ffcode = ffargs[GPU_TYPE][self.__qual].format(dl_npath, self.__prog_file, out_npath)
         
         LOGS.info(f'FFCode: {ffcode}')
         self.__proc = await create_subprocess_shell(ffcode, stdout=PIPE, stderr=PIPE)
