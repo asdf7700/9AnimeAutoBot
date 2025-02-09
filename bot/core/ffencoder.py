@@ -12,7 +12,7 @@ from .func_utils import mediainfo, convertBytes, convertTime, sendMessage, editM
 from .reporter import rep
 
 # Detect GPU type
-GPU_TYPE = Var.GPU_TYPE  # Set this in your config: 'nvidia', 'intel', 'cpu'
+GPU_TYPE = Var.nvidia  # Set this in your config: 'nvidia', 'intel', 'cpu'
 
 ffargs = {
     'nvidia': {
